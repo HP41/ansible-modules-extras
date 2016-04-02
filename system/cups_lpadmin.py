@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # (c) 2015, David Symons (Multimac) <Mult1m4c@gmail.com>
+# (c) 2016, Konstantin Shalygin <k0ste@cn.ru>
 #
 # This file is part of Ansible
 #
@@ -18,87 +19,114 @@
 # You should have received a copy of the GNU General Public License
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 
-import json
-import re
-import shlex
-
 DOCUMENTATION = '''
 ---
 module: cups_lpadmin
-author: David Symons (Multimac) <Mult1m4c@gmail.com>
+author: 
+    - "David Symons (Multimac) <Mult1m4c@gmail.com>"
+    - "Konstantin Shalygin <k0ste@cn.ru>"
 short_description: Manages printers in CUPS via lpadmin
-version_added: "2.0"
-requirements:
-  - CUPS 1.7+
 description:
-  - Creates, removes and sets options for printers in CUPS
+    - Creates, removes and sets options for printers in CUPS.
+version_added: "2.1"
+notes: []
+requirements:
+    - CUPS 1.7+
 options:
-  state:
-    choices: [present, absent]
-    default: present
-    description:
-      - Whether the printer should or should not be in CUPS.
-  dest:
-    description:
-      - The destination to configure or remove from CUPS
-    required: true
-  uri:
-    default: None
-    description:
-      - The URI to use when connecting to the printer
-      - This is only required in the present state
-    required: false
-  enabled:
-    default: true
-    description:
-      - Whether or not the printer should be enabled and accepting jobs
-    required: false
-  shared:
-    default: false
-    description:
-      - Whether or not the printer should be shared on the network
-    required: false
-  model:
-    default: None
-    description:
-      - The System V interface or PPD file to be used for the printer
-    required: false
-  info:
-    default: None
-    description:
-      - The textual description of the printer.
-    required: false
-  location:
-    default: None
-    description:
-      - The textual location of the printer.
-    required: false
-  options:
-    default: { }
-    description:
-      - A dictionary of key-value pairs describing printer options and their required value.
-    required: false
+    name:
+        description:
+            - Name of the printer in CUPS
+        required: true
+        default: null
+    state:
+        description:
+            - Whether the printer should or not be in CUPS.
+        required: false
+        default: present
+        choices: ["present", "absent"]
+    driver:
+        description:
+            - System V interface or PPD file.
+        required: false
+        default: model
+        choices: ["model", "ppd"]
+    uri:
+        description:
+            - The URI to use when connecting to the printer. This is only required in the present state.
+        required: false
+        default: null
+    enabled:
+        description:
+            - Whether or not the printer should be enabled and accepting jobs.
+        required: false
+        default: true
+        choices: ["true", "false"]
+    shared:
+        description:
+            - Whether or not the printer should be shared on the network.
+        required: false
+        default: false
+        choices: ["true", "false"]
+    model:
+        description:
+            - The System V interface or PPD file to be used for the printer.
+        required: false
+        default: null
+    default:
+        description:
+          - Set default server printer. Only one printer can be default.
+        required: false
+        default: false
+        choices: ["true", "false"]
+    info:
+        description:
+            - The textual description of the printer.
+        required: false
+        default: null
+    location:
+        description:
+            - The textual location of the printer.
+        required: false
+        default: null
+    options:
+        description:
+            - A dictionary of key-value pairs describing printer options and their required value.
+        default: { }
+        required: false
 '''
 
 EXAMPLES = '''
+# Creates HP printer via ethernet, set default paper size and
+  make this printer as server default
+- cups_lpadmin:
+    name: 'HP_M1536'
+    state: 'present'
+    uri: 'hp:/net/HP_LaserJet_M1536dnf_MFP?ip=192.168.1.2'
+    model: 'drv:///hp/hpcups.drv/hp-laserjet_m1539dnf_mfp-pcl3.ppd'
+    default: 'true'
+    location: 'Lib'
+    info: 'MFP'
+    options:
+      media: 'iso_a4_210x297mm'
+
 # Creates a Zebra ZPL printer called zebra
-- cups_lpadmin: state=present dest=zebra uri=192.168.1.2 model=drv:///sample.drv/zebra.ppd
+- cups_lpadmin: state=present name=zebra uri=192.168.1.2 model=drv:///sample.drv/zebra.ppd
 
 # Updates the zebra printer with some custom options
 - cups_lpadmin:
     state: present
-    dest: zebra
+    name: zebra
     uri: 192.168.1.2
     model: drv:///sample.drv/zebra.ppd
     options:
       PageSize: w288h432
 
 # Creates a raw printer called raw_test
-- cups_lpadmin: state=present dest=raw_test uri=192.168.1.3
+- cups_lpadmin: state=present name=raw_test uri=192.168.1.3
 
 # Deletes the printers set up by the previous tasks
-- cups_lpadmin: state=absent dest=zebra
-- cups_lpadmin: state=absent dest=raw_test
+- cups_lpadmin: state=absent name=zebra
+- cups_lpadmin: state=absent name=raw_test
 '''
 
 class CUPSPrinter(object):
@@ -106,11 +134,13 @@ class CUPSPrinter(object):
     def __init__(self, module):
         self.module = module
 
-        self.destination = module.params['dest']
+        self.driver = module.params['driver']
+        self.name = module.params['name']
         self.uri = module.params['uri']
 
         self.enabled = module.params['enabled']
         self.shared = module.params['shared']
+        self.default = module.params['default']
 
         self.model = module.params['model']
 
@@ -120,7 +150,7 @@ class CUPSPrinter(object):
         self.options = module.params['options']
 
         # Use lpd if a protocol is not specified
-        if self.uri and '://' not in self.uri:
+        if self.uri and ':/' not in self.uri:
             self.uri = 'lpd://{0}/'.format(self.uri)
 
     def _get_installed_drivers(self):
@@ -159,9 +189,12 @@ class CUPSPrinter(object):
         return drivers
 
     def _get_make_and_model(self):
-        if not self.model:
-            # We're dealing with a raw printer then
-            return "Local Raw Printer"
+        if not self.driver or self.driver == 'model':
+            '''Raw printer is defined or model not defined'''
+            if not self.model or self.model == 'raw':
+                return "Local Raw Printer"
+        elif self.driver == 'ppd':
+            return
 
         installed_drivers = self._get_installed_drivers()
         if self.model in installed_drivers:
@@ -170,9 +203,7 @@ class CUPSPrinter(object):
         self.module.fail_json(msg="unable to determine printer make and model")
 
     def _install_printer(self):
-        cmd = [ 'lpadmin',
-                '-p', self.destination,
-                '-v', self.uri ]
+        cmd = ['lpadmin', '-p', self.name, '-v', self.uri]
 
         if self.enabled:
             cmd.append('-E')
@@ -182,32 +213,38 @@ class CUPSPrinter(object):
         else:
             cmd.extend(['-o', 'printer-is-shared=false'])
 
-        if self.model:
+        if self.driver == 'model':
             cmd.extend(['-m', self.model])
-
+        elif self.driver == 'ppd':
+            cmd.extend(['-P', self.model])
         if self.info:
             cmd.extend(['-D', self.info])
         if self.location:
             cmd.extend(['-L', self.location])
+        if self.default:
+            cmd.extend(['-d', self.name])
 
         return self.module.run_command(cmd)
 
     def _install_printer_options(self):
-        cmd = [ 'lpadmin',
-                '-p', self.destination ]
+        cmd = ['lpadmin', '-p', self.name]
 
         for k, v in self.options.iteritems():
             cmd.extend(['-o', '{0}={1}'.format(k, v)])
 
+        '''Target printer is default server printer'''
+        if self.default:
+            cmd.extend(['-d', self.name])
+
         return self.module.run_command(cmd)
 
     def _uninstall_printer(self):
-        cmd = ['lpadmin', '-x', self.destination]
+        cmd = ['lpadmin', '-x', self.name]
         return self.module.run_command(cmd)
 
     def get_printer_cups_options(self):
-        """Returns the CUPS options for the printer"""
-        cmd = ['lpoptions', '-p', self.destination]
+        '''Returns the CUPS options for the printer'''
+        cmd = ['lpoptions', '-p', self.name]
         (rc, out, err) = self.module.run_command(cmd)
 
         options = { }
@@ -222,8 +259,8 @@ class CUPSPrinter(object):
         return options
 
     def get_printer_specific_options(self):
-        """Returns the printer specific options for the printer, as well as the accepted options"""
-        cmd = ['lpoptions', '-p', self.destination, '-l']
+        '''Returns the printer specific options for the printer, as well as the accepted options'''
+        cmd = ['lpoptions', '-p', self.name, '-l']
         (rc, out, err) = self.module.run_command(cmd)
 
         options = { }
@@ -262,11 +299,11 @@ class CUPSPrinter(object):
             'printer-location': self.location,
         }
 
-        # 'printer-info' defaults to the destination name if not specified manually
+        # 'printer-info' defaults to the printer name if not specified manually
         if self.info:
             expected_cups_options['printer-info'] = self.info
         else:
-            expected_cups_options['printer-info'] = self.destination
+            expected_cups_options['printer-info'] = self.name
 
         if self.shared:
             expected_cups_options['printer-is-shared'] = 'true'
@@ -297,10 +334,10 @@ class CUPSPrinter(object):
         return True
 
     def exists(self):
-        cmd = ['lpstat', '-p', self.destination]
+        cmd = ['lpstat', '-p', self.name]
         (rc, out, err) = self.module.run_command(cmd)
 
-        # This command will fail if the destination doesn't exist (rc != 0)
+        # This command will fail if the self.name doesn't exist (rc != 0)
         return rc == 0
 
     def install(self):
@@ -345,15 +382,17 @@ class CUPSPrinter(object):
 def main():
     module = AnsibleModule(
         argument_spec = dict(
-            state=dict(default='present', choices=['present', 'absent'], type='str'),
-            dest=dict(required=True, type='str'),
-            uri=dict(default=None, type='str'),
-            enabled=dict(default=True, type='bool'),
-            shared=dict(default=False, type='bool'),
-            model=dict(default=None, type='str'),
-            info=dict(default=None, type='str'),
-            location=dict(default=None, type='str'),
-            options=dict(default={ }, type='dict'),
+            state = dict(default='present', choices=['present', 'absent'], type='str'),
+            driver = dict(default='model', choices=['model', 'ppd'], type='str'),
+            name = dict(required=True, type='str'),
+            uri = dict(default=None, type='str'),
+            enabled = dict(default=True, type='bool'),
+            shared = dict(default=False, type='bool'),
+            default = dict(default=False, type='bool'),
+            model = dict(default=None, type='str'),
+            info = dict(default=None, type='str'),
+            location = dict(default=None, type='str'),
+            options = dict(default={ }, type='dict'),
         ),
         supports_check_mode=False
     )
@@ -366,7 +405,7 @@ def main():
 
     result = { }
     result['state'] = module.params['state']
-    result['destination'] = cups_printer.destination
+    result['name'] = cups_printer.name
 
     state = module.params['state']
     if state == 'present':
