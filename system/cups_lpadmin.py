@@ -30,6 +30,8 @@ author:
 short_description: Manages printers in CUPS via lpadmin
 description:
     - Creates, removes and sets options for printers in CUPS.
+    - Creates, removes and sets options for classes in CUPS.
+    - For classes the members are defined as a final state and therefore will only have the members defined.
 version_added: "2.1"
 notes: []
 requirements:
@@ -102,10 +104,10 @@ options:
         default: null
     class_members:
         description:
-            - An array/list of printers to be added to this class
+            - A list of printers to be added to this class
         required: false
         default: null
-        type: array
+        type: list
     report_ipp_supply_levels:
         description:
             - Whether or not the printer must report supply status via IPP
@@ -194,6 +196,14 @@ EXAMPLES = '''
 
 
 class CUPSObject(object):
+    # Methods starting with 'cups_object' can be used with both printer and classes.
+    # Methods starting with 'class' are meant to work with classes only.
+    # Methods starting with 'printer' are meant to work with printers only.
+
+    # Class Members defined in this script will be the final list of printers in that class.
+    # It cannot add or remove from an existing list that might have more members that defined.
+    # It'll uninstall the class and create it from scratch as defined in this script if the defined member list
+    # and the actual member list don't match.
 
     def __init__(self, module):
         self.module = module
@@ -219,8 +229,7 @@ class CUPSObject(object):
 
         self.assign_cups_policy = module.params['assign_cups_policy']
 
-        if module.params['class_members']:
-            self.class_members = ast.literal_eval(module.params['class_members'])
+        self.class_members = module.params['class_members']
 
         self.report_ipp_supply_levels = module.params['report_ipp_supply_levels']
         self.report_snmp_supply_levels = module.params['report_snmp_supply_levels']
@@ -306,7 +315,7 @@ class CUPSObject(object):
 
     # cupsIPPSupplies, cupsSNMPSupplies, job-k-limit, job-page-limit, printer-op-policy,
     # job-quota-period cannot be checked via cups command-line tools yet.
-    # Therefore force running setting of options
+    # Therefore force set these options if they exist
     def _printer_install_uncheckable_options(self):
         cmd = ['lpadmin', '-p', self.name]
 
@@ -340,7 +349,6 @@ class CUPSObject(object):
         for k, v in self.options.iteritems():
             cmd.extend(['-o', '{0}={1}'.format(k, v)])
 
-        # Target printer is default server printer
         if self.default:
             cmd.extend(['-d', self.name])
 
@@ -351,6 +359,8 @@ class CUPSObject(object):
         out = ''
         err = ''
         for printer in self.class_members:
+            # Going through all the printers that are supposed to be in the class and adding them to said class.
+            # Ensuring first the printer exists.
             if self.exists(another_object_to_check=printer):
                 (rc, install_out, install_err) = self.module.run_command(['lpadmin', '-p', printer, '-c', self.name])
                 out = (out + '\n' + install_out).strip('\n')
@@ -358,6 +368,8 @@ class CUPSObject(object):
             else:
                 self.module.fail_json(msg="Printer {0} for class {1} doesn't exist".format(printer, self.name))
 
+        # Now that the printers are added to the class and the class created, we are setting up a few
+        # settings for the class itself.
         if self.exists():
             cmd = ['lpadmin', '-p', self.name]
 
@@ -381,9 +393,15 @@ class CUPSObject(object):
 
         return rc, out, err
 
+    # cupsIPPSupplies, cupsSNMPSupplies, printer-op-policy, cannot be checked via cups command-line tools yet.
+    # Therefore force set these options if they exist
     def _class_install_uncheckable_options(self):
         orig_cmd = ['lpadmin', '-p', self.name]
-        cmd = list(orig_cmd)
+        cmd = list(orig_cmd)  # Making a copy of the list/array
+
+        rc = None
+        out = ''
+        err = ''
 
         if self.report_ipp_supply_levels:
             cmd.extend(['-o', 'cupsIPPSupplies=true'])
@@ -395,28 +413,36 @@ class CUPSObject(object):
         else:
             cmd.extend(['-o', 'cupsSNMPSupplies=false'])
 
-        if cmd == orig_cmd:
-            return None
-        else:
-            return self.module.run_command(cmd)
+        if self.assign_cups_policy:
+            cmd.extend(['-o', 'printer-op-policy={0}'.format(self.assign_cups_policy)])
 
+        if cmd != orig_cmd:
+            (rc, out, err) = self.module.run_command(cmd)
+            out = out.strip('\n')
+            err = err.strip('\n')
+
+        return rc, out, err
+
+    # Common method to uninstall a CUPS Object - Printer or Class
     def _cups_object_uninstall(self):
         cmd = ['lpadmin', '-x', self.name]
         return self.module.run_command(cmd)
 
+    # Has an optional 'another_object_to_be_checked' argument that can be sent to check
+    # if that object (printer or class) exists instead.
     def exists(self, another_object_to_check=None):
         cmd = ['lpstat', '-p']
+
         if another_object_to_check is None:
             cmd.append(self.name)
         else:
             cmd.append(another_object_to_check)
-        (rc, out, err) = self.module.run_command(cmd)
 
-        # This command will fail if the self.name doesn't exist (rc != 0)
+        (rc, out, err) = self.module.run_command(cmd)
         return rc == 0
 
-    def get_cups_options(self):
-        # Returns the CUPS options for the printer
+    # Returns the CUPS options for the printer
+    def cups_object_get_cups_options(self):
         cmd = ['lpoptions', '-p', self.name]
         (rc, out, err) = self.module.run_command(cmd)
 
@@ -431,22 +457,7 @@ class CUPSObject(object):
 
         return options
 
-    def class_get_cups_options(self):
-        # Returns the CUPS options for the printer
-        cmd = ['lpoptions', '-p', self.name]
-        (rc, out, err) = self.module.run_command(cmd)
-
-        options = {}
-        for s in shlex.split(out):
-            kv = s.split('=', 1)
-
-            if len(kv) == 1:  # If we only have an option name, set it's value to None
-                options[kv[0]] = None
-            elif len(kv) == 2:  # Otherwise set it's value to what we received
-                options[kv[0]] = kv[1]
-
-        return options
-
+    # Checks defined/expected CUPS options for said printer against current CUPS options and returns a boolean.
     def printer_check_cups_options(self):
         expected_cups_options = {
             'device-uri': self.uri,
@@ -458,7 +469,7 @@ class CUPSObject(object):
             'printer-info': self.info if self.info else self.name,
         }
 
-        cups_options = self.get_cups_options()
+        cups_options = self.cups_object_get_cups_options()
 
         # Comparing expected options as stated above to the options of the actual printer object.
         for k in expected_cups_options:
@@ -470,24 +481,6 @@ class CUPSObject(object):
 
         return True
 
-    def class_get_current_members(self):
-        # Returns the class members
-        cmd = ['lpstat', '-c', self.name]
-        (rc, out, err) = self.module.run_command(cmd)
-
-        if err:
-            self.module.fail_json(msg="This class doesn't exist.")
-
-        members = []
-        temp = shlex.split(out)
-        # Skip first line as it's an information line.
-        temp = temp[1:]
-        for m in temp:
-            str.strip(m)
-            members.append(m)
-
-        return members
-
     def class_check_cups_options(self):
         expected_cups_options = {
             'printer-location': self.location,
@@ -496,7 +489,7 @@ class CUPSObject(object):
         if self.info:
             expected_cups_options['printer-info'] = self.info
 
-        options = self.get_cups_options()
+        options = self.cups_object_get_cups_options()
         options_status = True
 
         # Comparing expected options as stated above to the options of the actual class object.
@@ -514,8 +507,27 @@ class CUPSObject(object):
 
         return options_status and class_members_status
 
+    # Returns the class members of a class
+    def class_get_current_members(self):
+        cmd = ['lpstat', '-c', self.name]
+        (rc, out, err) = self.module.run_command(cmd)
+
+        if err:
+            self.module.fail_json(
+                msg="Error occured while trying to 'lpstat' class - {0} - {1}".format(self.name, err))
+
+        members = []
+        temp = shlex.split(out)
+        # Skip first line as it's an information line.
+        temp = temp[1:]
+        for m in temp:
+            str.strip(m)
+            members.append(m)
+
+        return members
+
+    # Returns the printer specific options for the printer, as well as the accepted options
     def printer_get_specific_options(self):
-        # Returns the printer specific options for the printer, as well as the accepted options
         cmd = ['lpoptions', '-p', self.name, '-l']
         (rc, out, err) = self.module.run_command(cmd)
 
@@ -580,8 +592,9 @@ class CUPSObject(object):
             out = (out + '\n' + install_out).strip('\n')
             err = (err + '\n' + install_err).strip('\n')
 
-        # cupsIPPSupplies, cupsSNMPSupplies, job-k-limit, job-page-limit, job-quota-period cannot be checked
-        # via cups command-line tools yet. Therefore force running setting of options
+        # cupsIPPSupplies, cupsSNMPSupplies, job-k-limit, job-page-limit, printer-op-policy,
+        # job-quota-period cannot be checked via cups command-line tools yet.
+        # Therefore force set these options if they exist
         if self.exists():
             (rc, uncheckable_out, uncheckable_err) = self._printer_install_uncheckable_options()
 
@@ -596,7 +609,8 @@ class CUPSObject(object):
 
         return rc, out, err
 
-    def printer_or_class_uninstall(self):
+    # Can uninstall both a printer and class
+    def cups_object_uninstall(self):
         rc = None
         out = ''
         err = ''
@@ -606,6 +620,8 @@ class CUPSObject(object):
 
         return rc, out, err
 
+    # cupsIPPSupplies, cupsSNMPSupplies, printer-op-policy, cannot be checked via cups command-line tools yet.
+    # Therefore force set these options if they exist
     def class_install(self):
         if self.class_members is None:
             self.module.fail_json(msg="Empty class cannot be created.")
@@ -650,7 +666,7 @@ def main():
             info=dict(default=None, type='str'),
             location=dict(default=None, type='str'),
             assign_cups_policy=dict(default=None, type='str'),
-            class_members=dict(default=None, type='str'),
+            class_members=dict(default=[], type='list'),
             report_ipp_supply_levels=dict(default=True, type='bool'),
             report_snmp_supply_levels=dict(default=True, type='bool'),
             job_kb_limit=dict(default=None, type='int'),
@@ -671,16 +687,18 @@ def main():
               'printer_or_class': module.params['printer_or_class'],
               'name': cups_object.name}
 
+    # Checking if printer or class AND if state is present or absent and calling the appropriate method.
+
     if result['printer_or_class'] == 'printer':
         if result['state'] == 'present':
             (rc, out, err) = cups_object.printer_install()
         elif result['state'] == 'absent':
-            (rc, out, err) = cups_object.printer_or_class_uninstall()
+            (rc, out, err) = cups_object.cups_object_uninstall()
     elif result['printer_or_class'] == 'class':
         if result['state'] == 'present':
             (rc, out, err) = cups_object.class_install()
         elif result['state'] == 'absent':
-            (rc, out, err) = cups_object.printer_or_class_uninstall()
+            (rc, out, err) = cups_object.cups_object_uninstall()
 
     result['changed'] = False if rc is None else True
 
@@ -694,6 +712,5 @@ def main():
 
 # Import statements at the bottom as per Ansible best practices.
 from ansible.module_utils.basic import *
-import ast
 if __name__ == '__main__':
     main()
