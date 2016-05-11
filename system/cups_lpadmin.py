@@ -623,7 +623,7 @@ class CUPSObject(object):
     # cupsIPPSupplies, cupsSNMPSupplies, printer-op-policy, cannot be checked via cups command-line tools yet.
     # Therefore force set these options if they exist
     def class_install(self):
-        if self.class_members is None:
+        if not self.class_members:
             self.module.fail_json(msg="Empty class cannot be created.")
 
         rc = None
