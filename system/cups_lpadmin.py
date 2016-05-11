@@ -26,12 +26,13 @@ module: cups_lpadmin
 author:
     - "David Symons (Multimac) <Mult1m4c@gmail.com>"
     - "Konstantin Shalygin <k0ste@cn.ru>"
-    - "Hitesh Prabhakar <hiteshprab@gmail.com>"
+    - "Hitesh Prabhakar <H41P@GitHub>"
 short_description: Manages printers in CUPS via lpadmin
 description:
     - Creates, removes and sets options for printers in CUPS.
     - Creates, removes and sets options for classes in CUPS.
-    - For classes the members are defined as a final state and therefore will only have the members defined.
+    - For class installation, the members are defined as a final state and therefore will only have the members defined.
+    - At the moment, this module doesn't support check_mode
 version_added: "2.1"
 notes: []
 requirements:
@@ -39,9 +40,8 @@ requirements:
 options:
     name:
         description:
-            - Name of the printer in CUPS
+            - Name of the printer in CUPS.
         required: true
-        default: null
     state:
         description:
             - Whether the printer should or not be in CUPS.
@@ -49,9 +49,9 @@ options:
         default: present
         choices: ["present", "absent"]
     printer_or_class:
-        description: State whether the object we are working on is a printer or class
+        description:
+            - State whether the object we are working on is a printer or class.
         required: true
-        default: null
         choices: ['printer', 'class']
     driver:
         description:
@@ -104,19 +104,19 @@ options:
         default: null
     class_members:
         description:
-            - A list of printers to be added to this class
+            - A list of printers to be added to this class.
         required: false
-        default: null
+        default: []
         type: list
     report_ipp_supply_levels:
         description:
-            - Whether or not the printer must report supply status via IPP
+            - Whether or not the printer must report supply status via IPP.
         required: false
         default: true
         choices: ["true", "false"]
     report_snmp_supply_levels:
         description:
-            - Whether or not the printer must report supply status via SNMP (RFC 3805)
+            - Whether or not the printer must report supply status via SNMP (RFC 3805).
         required: false
         default: true
         choices: ["true", "false"]
@@ -149,6 +149,7 @@ EXAMPLES = '''
 - cups_lpadmin:
     name: 'HP_M1536'
     state: 'present'
+    printer_or_class: 'printer'
     uri: 'hp:/net/HP_LaserJet_M1536dnf_MFP?ip=192.168.1.2'
     model: 'drv:///hp/hpcups.drv/hp-laserjet_m1539dnf_mfp-pcl3.ppd'
     default: 'true'
@@ -157,14 +158,14 @@ EXAMPLES = '''
     printer_assign_policy: 'students'
     report_ipp_supply_levels: 'true'
     report_snmp_supply_levels: 'false'
-    # belongs_to_class: 'Lab Printers'
     options:
       media: 'iso_a4_210x297mm'
 
 # Create CUPS Class
 - cups_lpadmin:
-    state: present
-    printer_or_class: class
+    name: 'TestClass'
+    state: 'present'
+    printer_or_class: 'class'
     class_members: "{{a_yaml_array}}"
     info: 'A test class'
     location: 'A place of great importance'
@@ -175,23 +176,56 @@ EXAMPLES = '''
 # Updates the zebra printer with some custom options
 - cups_lpadmin:
     state: present
+    printer_or_class: printer
     name: zebra
     uri: 192.168.1.2
     model: drv:///sample.drv/zebra.ppd
     job_kb_limit: 2048
     job_quota_limit: 86400
     job_page_limit: 10
-    # belongs_to_class: Accounting Printers
-    # present_in_class: false
     options:
       PageSize: w288h432
 
 # Creates a raw printer called raw_test
-- cups_lpadmin: state=present name=raw_test uri=192.168.1.3
+- cups_lpadmin: state=present printer_or_class=printer name=raw_test uri=192.168.1.3
 
-# Deletes the printers set up by the previous tasks
-- cups_lpadmin: state=absent name=zebra
-- cups_lpadmin: state=absent name=raw_test
+# Deletes the printers/classes set up by the previous tasks
+- cups_lpadmin: state=absent printer_or_class=printer name=zebra
+- cups_lpadmin: state=absent printer_or_class=printer name=raw_test
+- cups_lpadmin: state=absent printer_or_class=class name=TestClass
+'''
+
+RETURN = '''
+state:
+    description: The state as defined in the invocation of this script.
+    returned: always
+    type: string
+    sample: "present"
+printer_or_class:
+    description: Printer or Class as defined when this script was invoked.
+    returned: always
+    type: string
+    sample: "class"
+name:
+    description: The name of the destination (printer/class) as defined when the script was invoked.
+    returned: always
+    type: string
+    sample: "Test-Printer"
+changed:
+    description: If any changes were made to the system when this script was run.
+    returned: always
+    type: boolean
+    sample: False
+stdout:
+    description: Output from all the commands run concatenated. Only returned if any changes to the system were run.
+    returned: changed
+    type: boolean
+    sample: "sample_command_output"
+stderr:
+    description: Any output errors from any commands run. Only returned if any changes to the system were run.
+    returned: failed
+    type: string
+    sample: "sample_command_error_output"
 '''
 
 
@@ -654,25 +688,25 @@ class CUPSObject(object):
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            state=dict(default='present', choices=['present', 'absent'], type='str'),
-            driver=dict(default='model', choices=['model', 'ppd'], type='str'),
+            state=dict(required=False, default='present', choices=['present', 'absent'], type='str'),
+            driver=dict(required=False, default='model', choices=['model', 'ppd'], type='str'),
             name=dict(required=True, type='str'),
             printer_or_class=dict(required=True, type='str', choices=['printer', 'class']),
-            uri=dict(default=None, type='str'),
-            enabled=dict(default=True, type='bool'),
-            shared=dict(default=False, type='bool'),
-            default=dict(default=False, type='bool'),
-            model=dict(default=None, type='str'),
-            info=dict(default=None, type='str'),
-            location=dict(default=None, type='str'),
-            assign_cups_policy=dict(default=None, type='str'),
-            class_members=dict(default=[], type='list'),
-            report_ipp_supply_levels=dict(default=True, type='bool'),
-            report_snmp_supply_levels=dict(default=True, type='bool'),
-            job_kb_limit=dict(default=None, type='int'),
-            job_quota_limit=dict(default=None, type='int'),
-            job_page_limit=dict(default=None, type='int'),
-            options=dict(default={}, type='dict'),
+            uri=dict(required=False, default=None, type='str'),
+            enabled=dict(required=False, default=True, type='bool'),
+            shared=dict(required=False, default=False, type='bool'),
+            default=dict(required=False, default=False, type='bool'),
+            model=dict(required=False, default=None, type='str'),
+            info=dict(required=False, default=None, type='str'),
+            location=dict(required=False, default=None, type='str'),
+            assign_cups_policy=dict(required=False, default=None, type='str'),
+            class_members=dict(required=False, default=[], type='list'),
+            report_ipp_supply_levels=dict(required=False, default=True, type='bool'),
+            report_snmp_supply_levels=dict(required=False, default=True, type='bool'),
+            job_kb_limit=dict(required=False, default=None, type='int'),
+            job_quota_limit=dict(required=False, default=None, type='int'),
+            job_page_limit=dict(required=False, default=None, type='int'),
+            options=dict(required=False, default={}, type='dict'),
         ),
         supports_check_mode=False
     )
