@@ -51,8 +51,9 @@ options:
     printer_or_class:
         description:
             - State whether the object we are working on is a printer or class.
-        required: true
-        choices: ['printer', 'class']
+        required: false
+        default: printer
+        choices: ["printer", "class"]
     driver:
         description:
             - System V interface or PPD file.
@@ -270,6 +271,9 @@ class CUPSObject(object):
         self.job_kb_limit = module.params['job_kb_limit']
         self.job_quota_limit = module.params['job_quota_limit']
         self.job_page_limit = module.params['job_page_limit']
+
+        if (module.params['state'] is 'present') and (module.params['printer_or_class'] is None):
+            module.fail_json(msg="When state=present printer or class must be defined.")
 
     def _printer_get_installed_drivers(self):
         cmd = ['lpinfo', '-l', '-m']
@@ -548,7 +552,7 @@ class CUPSObject(object):
 
         if err:
             self.module.fail_json(
-                msg="Error occured while trying to 'lpstat' class - {0} - {1}".format(self.name, err))
+                msg="Error occurred while trying to 'lpstat' class - {0} - {1}".format(self.name, err))
 
         members = []
         temp = shlex.split(out)
@@ -691,7 +695,7 @@ def main():
             state=dict(required=False, default='present', choices=['present', 'absent'], type='str'),
             driver=dict(required=False, default='model', choices=['model', 'ppd'], type='str'),
             name=dict(required=True, type='str'),
-            printer_or_class=dict(required=True, type='str', choices=['printer', 'class']),
+            printer_or_class=dict(default='printer', required=False, type='str', choices=['printer', 'class']),
             uri=dict(required=False, default=None, type='str'),
             enabled=dict(required=False, default=True, type='bool'),
             shared=dict(required=False, default=False, type='bool'),
@@ -723,16 +727,13 @@ def main():
 
     # Checking if printer or class AND if state is present or absent and calling the appropriate method.
 
-    if result['printer_or_class'] == 'printer':
-        if result['state'] == 'present':
+    if result['state'] == 'present':
+        if result['printer_or_class'] == 'printer':
             (rc, out, err) = cups_object.printer_install()
-        elif result['state'] == 'absent':
-            (rc, out, err) = cups_object.cups_object_uninstall()
-    elif result['printer_or_class'] == 'class':
-        if result['state'] == 'present':
+        elif result['printer_or_class'] == 'class':
             (rc, out, err) = cups_object.class_install()
-        elif result['state'] == 'absent':
-            (rc, out, err) = cups_object.cups_object_uninstall()
+    elif result['state'] == 'absent':
+        (rc, out, err) = cups_object.cups_object_uninstall()
 
     result['changed'] = False if rc is None else True
 
