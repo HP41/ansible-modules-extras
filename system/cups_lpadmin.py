@@ -795,7 +795,7 @@ class CUPSObject(object):
     def printer_check_options(self):
         """
         Returns if the defined options is the same as the options currently set for the printer.
-        :return: Returns if the defined options is the same as the options currently set for the printer.
+        :returns: Returns if the defined options is the same as the options currently set for the printer.
         """
         expected_printer_options = self.options
 
@@ -821,7 +821,7 @@ class CUPSObject(object):
         It also installs mandatory settings.
 
         Lastly it sets the printer specific options to the printer if it isn't the same.
-        :return: rc, out, err. The output of the multiple commands run during this installation process.
+        :returns: rc, out, err. The output of the multiple commands run during this installation process.
         """
         if self.uri is None and not self.exists():
             self.module.fail_json(msg="'URI' is required to install printer")
