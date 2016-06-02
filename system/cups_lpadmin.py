@@ -172,6 +172,18 @@ EXAMPLES = '''
     options:
       media: 'iso_a4_210x297mm'
 
+# Creates HP Printer via IPP (shared USB printer in another CUPS instance)
+  very important include 'snmp=false' to prevent adopt 'parent' driver,
+  because if 'parent' receive not raw job this job have fail (filter failed)
+- cups_lpadmin:
+    name: 'HP_P2055'
+    state: 'present'
+    uri: 'ipp://192.168.2.127:631/printers/HP_P2055?snmp=false'
+    model: 'raw'
+    default: 'true'
+    options:
+      media: 'iso_a4_210x297mm'
+
 # Create CUPS Class
 - cups_lpadmin:
     name: 'TestClass'
@@ -199,12 +211,8 @@ EXAMPLES = '''
     options:
       PageSize: w288h432
 
-# Creates a raw printer called raw_test
-- cups_lpadmin: state=present printer_or_class=printer name=raw_test uri=192.168.1.3
-
 # Deletes the printers/classes set up by the previous tasks
 - cups_lpadmin: state=absent printer_or_class=printer name=zebra
-- cups_lpadmin: state=absent printer_or_class=printer name=raw_test
 - cups_lpadmin: state=absent printer_or_class=class name=TestClass
 '''
 
@@ -403,8 +411,8 @@ class CUPSObject(object):
         """
         if self.driver == 'model':
             # Raw printer is defined
-            if not self.model or self.model == 'raw':
-                return "Local Raw Printer"
+            if self.model == None or self.model == 'raw':
+                return "Remote Printer"
         elif self.driver == 'ppd':
             return
 
@@ -431,7 +439,7 @@ class CUPSObject(object):
         else:
             cmd.extend(['-o', 'printer-is-shared=false'])
 
-        if self.driver == 'model':
+        if self.driver == 'model' and self.model != None:
             cmd.extend(['-m', self.model])
         elif self.driver == 'ppd':
             cmd.extend(['-P', self.model])
