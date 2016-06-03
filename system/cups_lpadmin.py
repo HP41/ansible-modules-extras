@@ -31,15 +31,15 @@ DOCUMENTATION = '''
 module: cups_lpadmin
 author:
     - "David Symons (Multimac) <Mult1m4c@gmail.com>"
-    - "Konstantin Shalygin <k0ste@cn.ru>"
+    - "Konstantin Shalygin <k0ste@k0ste.ru>"
     - "Hitesh Prabhakar <H41P@GitHub>"
-short_description: Manages printers in CUPS via lpadmin
+short_description: Manages printers in CUPS printing system.
 description:
     - Creates, removes and sets options for printers in CUPS.
     - Creates, removes and sets options for classes in CUPS.
     - For class installation, the members are defined as a final state and therefore will only have the members defined.
     - At the moment, this module doesn't support check_mode
-version_added: "2.1"
+version_added: "2.2"
 notes: []
 requirements:
     - CUPS 1.7+
@@ -47,7 +47,14 @@ options:
     name:
         description:
             - Name of the printer in CUPS.
-        required: true
+        required: false
+        default: null
+    purge:
+        description:
+            - Task to purge all printers in CUPS. Convenient before deploy.
+        required: false
+        default: false
+        choices: ["true", "false"]
     state:
         description:
             - Whether the printer should or not be in CUPS.
@@ -313,6 +320,8 @@ class CUPSObject(object):
         self.driver = self.strip_whitespace(module.params['driver'])
         self.name = self.strip_whitespace(module.params['name'])
 
+        self.purge = module.params['purge']
+
         self.uri = self.strip_whitespace(module.params['uri'])
 
         self.enabled = module.params['enabled']
@@ -396,6 +405,35 @@ class CUPSObject(object):
             drivers[curr['name']] = curr
 
         return drivers
+
+    def _printer_get_all_printers(self):
+        """
+        Method return current printers in CUPS.
+        """
+        cmd = ['lpstat', '-a']
+        (rc, out, err) = self.module.run_command(cmd)
+
+        if rc == 0:
+            # Match only 1st column, where placed printer name
+            all_printers = [out.split()[0] for out in out.splitlines()]
+            return all_printers
+        elif rc == 1:
+            return
+
+    def _printer_purge_all_printers(self):
+        """
+        Purge all returned devices in _printer_get_all_printers method.
+
+        If no one printer returned - exit.
+        """
+        all_printers = self._printer_get_all_printers()
+
+        if not all_printers:
+            self.module.exit_json(msg="No printers")
+        else:
+            for printer in all_printers:
+                (rc, out, err) = self._cups_object_uninstall(another_cups_object_to_uninstall=printer)
+            return rc, out, err
 
     def _printer_get_make_and_model(self):
         """
@@ -592,12 +630,20 @@ class CUPSObject(object):
                           "Error details - {1}".format(cmd, err)
                 self.module.fail_json(msg=message)
 
-    def _cups_object_uninstall(self):
+    def _cups_object_uninstall(self, another_cups_object_to_uninstall=None):
         """
         Uninstalls a printer or class
+
+        :param another_cups_object_to_uninstall: Optional param to uninstall another printer.
         :returns: rc, out, err. The output of the lpadmin uninstallation command.
         """
-        cmd = ['lpadmin', '-x', self.name]
+        cmd = ['lpadmin', '-x']
+
+        if another_cups_object_to_uninstall is None:
+            cmd.append(self.name)
+        else:
+            cmd.append(another_cups_object_to_uninstall)
+
         return self.module.run_command(cmd)
 
     def exists(self, another_cups_object_to_check=None):
@@ -864,6 +910,17 @@ class CUPSObject(object):
 
         return rc, out, err
 
+    def cups_object_purge(self):
+        """
+        """
+        rc = None
+        out = ''
+        err = ''
+
+        (rc, out, err) = self._printer_purge_all_printers()
+
+        return rc, out, err
+
     def cups_object_uninstall(self):
         """
         Uninstalls a printer or class.
@@ -942,7 +999,8 @@ def main():
         argument_spec=dict(
             state=dict(required=False, default='present', choices=['present', 'absent'], type='str'),
             driver=dict(required=False, default='model', choices=['model', 'ppd'], type='str'),
-            name=dict(required=True, type='str'),
+            purge=dict(required=False, default=False, type='bool'),
+            name=dict(required=False, type='str'),
             printer_or_class=dict(default='printer', required=False, type='str', choices=['printer', 'class']),
             uri=dict(required=False, default=None, type='str'),
             enabled=dict(required=False, default=True, type='bool'),
@@ -960,7 +1018,8 @@ def main():
             job_page_limit=dict(required=False, default=None, type='int'),
             options=dict(required=False, default={}, type='dict'),
         ),
-        supports_check_mode=False
+        required_one_of = [['name', 'purge']],
+        supports_check_mode=True
     )
 
     cups_object = CUPSObject(module)
@@ -970,8 +1029,15 @@ def main():
     err = ''
 
     result = {'state': module.params['state'],
+              'purge': module.params['purge'],
               'printer_or_class': module.params['printer_or_class'],
               'name': cups_object.name}
+
+    # Check purge option and purge all printers if exists
+    if result['purge'] and not module.check_mode:
+        (rc, out, err) = cups_object.cups_object_purge()
+        if not result['name']:
+            module.exit_json(changed=True, msg="All printers purged")
 
     # Checking if printer or class AND if state is present or absent and calling the appropriate method.
     if result['state'] == 'present':
