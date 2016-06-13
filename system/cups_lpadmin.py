@@ -63,7 +63,7 @@ options:
         choices: ["present", "absent"]
     printer_or_class:
         description:
-            - State whether the object we are working on is a printer or class.
+            - State whether the object/item we are working on is a printer or class.
         required: false
         default: printer
         choices: ["printer", "class"]
@@ -274,11 +274,11 @@ class CUPSCommand(object):
         This is the main class that directly deals with the lpadmin command.
 
         Method naming methodology:
-            - Methods prefixed with 'cups_object' or '_cups_object' can be used with both printer and classes.
+            - Methods prefixed with 'cups_item' or '_cups_item' can be used with both printer and classes.
             - Methods prefixed with 'class' or '_class' are meant to work with classes only.
             - Methods prefixed with 'printer' or '_printer' are meant to work with printers only.
 
-        CUPSObject handles printers like so:
+        CUPSCommand handles printers like so:
             - If state=absent,
                 - Printer exists: Deletes printer
                 - Printer doesn't exist: Does nothing and exits
@@ -295,7 +295,7 @@ class CUPSCommand(object):
                 - job-page-limit
                 - job-quota-period
 
-        CUPSObject handles classes like so:
+        CUPSCommand handles classes like so:
             - If state=absent:
                 - Class exists: Deletes class
                 - Class doesn't exist: Does nothing and exits
@@ -561,14 +561,14 @@ class CUPSCommand(object):
 
         return all_printers
 
-    def cups_object_purge(self):
+    def cups_purge_all_items(self):
         """
         Purge all printers and classes installed on CUPS.
         """
         all_printers = self._printer_get_all_printers()
 
         for printer in all_printers:
-            self.cups_object_uninstall(object_to_uninstall=printer)
+            self.cups_item_uninstall(item_to_uninstall=printer)
 
     def _printer_get_make_and_model(self):
         """
@@ -699,7 +699,7 @@ class CUPSCommand(object):
         for printer in self.class_members:
             # Going through all the printers that are supposed to be in the class and adding them to said class.
             # Ensuring first the printer exists.
-            if self.exists(object_to_check=printer):
+            if self.exists(item_to_check=printer):
                 cmd = ['lpadmin', '-p', printer, '-c', self.name]
                 self.process_change_command(cmd,
                                             err_msg="Failed to add printer '{0}' to class '{1}'"
@@ -761,28 +761,28 @@ class CUPSCommand(object):
                                         .format(self.name),
                                         only_log_on_error=True)
 
-    def cups_object_uninstall_self(self):
+    def cups_item_uninstall_self(self):
         """
         Uninstalls the printer or class defined in this class
         """
-        self.cups_object_uninstall(object_to_uninstall=self.name)
+        self.cups_item_uninstall(item_to_uninstall=self.name)
 
-    def cups_object_uninstall(self, object_to_uninstall):
+    def cups_item_uninstall(self, item_to_uninstall):
         """
-        Uninstalls a printer or class given in object_to_uninstall if it exists else do nothing.
+        Uninstalls a printer or class given in item_to_uninstall if it exists else do nothing.
 
-        :param object_to_uninstall: the CUPS Object (Printer or Class) that needs to be uninstalled
+        :param item_to_uninstall: the CUPS Item (Printer or Class) that needs to be uninstalled
         """
         cmd = ['lpadmin', '-x']
 
-        if self.exists(object_to_check=object_to_uninstall):
-            if object_to_uninstall is not None:
-                cmd.append(object_to_uninstall)
+        if self.exists(item_to_check=item_to_uninstall):
+            if item_to_uninstall:
+                cmd.append(item_to_uninstall)
                 self.process_change_command(cmd,
-                                            err_msg="Uninstalling CUPS object '{0}' failed"
-                                            .format(object_to_uninstall))
+                                            err_msg="Uninstalling CUPS Item '{0}' failed"
+                                            .format(item_to_uninstall))
             else:
-                self.module.fail_json(msg="Cannot delete/uninstall a cups object (printer/class) with no name")
+                self.module.fail_json(msg="Cannot delete/uninstall a cups item (printer/class) with no name")
 
     def exists_self(self):
         """
@@ -792,27 +792,27 @@ class CUPSCommand(object):
 
         :returns: The return value of self.exists()
         """
-        return self.exists(object_to_check=self.name)
+        return self.exists(item_to_check=self.name)
 
-    def exists(self, object_to_check=None):
+    def exists(self, item_to_check=None):
         """
         Checks to see if a printer or class exists.
 
         Using the lpstat command and based on if an error code is returned it can confirm if a printer or class exists.
 
-        :param object_to_check: The print or class name to check if it exists
+        :param item_to_check: The print or class name to check if it exists
 
         :returns: True if return code form the command is 0 and therefore there where no errors and printer/class
-        exists. Module exits if object_to_check is not defined.
+        exists. Module exits if item_to_check is not defined.
         """
-        if object_to_check:
-            cmd = ['lpstat', '-p', object_to_check]
+        if item_to_check:
+            cmd = ['lpstat', '-p', item_to_check]
             (rc, out, err) = self.process_info_command(cmd)
             return rc == 0
         else:
-            self.module.fail_json(msg="Cannot check if a cups object (printer/class) exists that has no name")
+            self.module.fail_json(msg="Cannot check if a cups item (printer/class) exists that has no name")
 
-    def cups_object_get_cups_options(self):
+    def cups_item_get_cups_options(self):
         """
         Returns a list of currently set options for the printer or class.
 
@@ -861,7 +861,7 @@ class CUPSCommand(object):
         if self.location:
             expected_cups_options['printer-location'] = self.location
 
-        cups_options = self.cups_object_get_cups_options()
+        cups_options = self.cups_item_get_cups_options()
 
         # Comparing expected options as stated above to the options of the actual printer object.
         for k in expected_cups_options:
@@ -890,7 +890,7 @@ class CUPSCommand(object):
         if self.location:
             expected_cups_options['printer-location'] = self.location
 
-        options = self.cups_object_get_cups_options()
+        options = self.cups_item_get_cups_options()
         options_status = True
 
         # Comparing expected options as stated above to the options of the actual class object.
@@ -1028,7 +1028,7 @@ class CUPSCommand(object):
         Lastly it sets the printer specific options to the printer if it isn't the same.
         """
         if self.exists_self() and not self.printer_check_cups_options():
-            self.cups_object_uninstall_self()
+            self.cups_item_uninstall_self()
 
         if not self.exists_self():
             self._printer_install()
@@ -1054,7 +1054,7 @@ class CUPSCommand(object):
         It also installs mandatory settings.
         """
         if self.exists_self() and not self.class_check_cups_options():
-            self.cups_object_uninstall_self()
+            self.cups_item_uninstall_self()
 
         if not self.exists_self():
             self._class_install()
@@ -1069,18 +1069,18 @@ class CUPSCommand(object):
         Based on state, the following is done:
         - state=present:
             - printer_or_class=printer:
-                - Call CUPSObject.printer_install() to install the printer.
+                - Call CUPSCommand.printer_install() to install the printer.
             - printer_or_class=class:
-                - Call CUPSObject.class_install() to install the class.
+                - Call CUPSCommand.class_install() to install the class.
         - state=absent:
-            - Call CUPSObject.cups_object_uninstall() to uninstall either a printer or a class.
+            - Call CUPSCommand.cups_item_uninstall() to uninstall either a printer or a class.
 
         :returns: 'result' a hash containing the desired state.
         """
         result = {}
 
         if self.purge:
-            self.cups_object_purge()
+            self.cups_purge_all_items()
             result['purge'] = self.purge
 
         else:
@@ -1093,14 +1093,14 @@ class CUPSCommand(object):
                 if self.state == 'present':
                     self.printer_install()
                 else:
-                    self.cups_object_uninstall_self()
+                    self.cups_item_uninstall_self()
                 result['uri'] = self.uri
 
             else:
                 if self.state == 'present':
                     self.class_install()
                 else:
-                    self.cups_object_uninstall_self()
+                    self.cups_item_uninstall_self()
                 result['class_members'] = self.class_members
 
         result['changed'] = False if self.rc is None else True
@@ -1122,18 +1122,9 @@ def main():
     main function that populates this ansible module with variables and sets it in motion.
 
     First an Ansible Module is defined with the variable definitions and default values.
-    Then a CUPSObject is created using using this module. CUPSObject populates its own values based on the module vars.
+    Then a CUPSCommand is created using using this module. CUPSCommand populates its own values based on the module vars.
 
-    This CUPSObject's start_process() method is called to begin processing the information provided to the module.
-
-    Based on state, the following is done:
-    - state=present:
-        - printer_or_class=printer:
-            - Call CUPSObject.printer_install() to install the printer.
-        - printer_or_class=class:
-            - Call CUPSObject.class_install() to install the class.
-    - state=absent:
-        - Call CUPSObject.cups_object_uninstall() to uninstall either a printer or a class.
+    This CUPSCommand's start_process() method is called to begin processing the information provided to the module.
 
     Records the rc, out, err values of the commands run above and accordingly exists the module and sends the status
     back to to Ansible using module.exit_json().
