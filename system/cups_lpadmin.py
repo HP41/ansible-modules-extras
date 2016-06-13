@@ -257,12 +257,12 @@ stdout:
     description: Output from all the commands run concatenated. Only returned if any changes to the system were run.
     returned: always
     type: string
-    sample: "sample_command_output"
+    sample: "sample output"
 cmd_history:
     description: A concatenated string of all the commands run.
     returned: always
     type: string
-    sample: "sample_command(s)"
+    sample: "\nlpstat -p TEST \nlpinfo -l -m \nlpoptions -p TEST \nlpstat -p TEST \nlpstat -p TEST \nlpadmin -p TEST -o cupsIPPSupplies=true -o cupsSNMPSupplies=true \nlpoptions -p TEST -l "
 '''
 
 
@@ -352,9 +352,14 @@ class CUPSCommand(object):
         self.job_quota_limit = module.params['job_quota_limit']
         self.job_page_limit = module.params['job_page_limit']
 
-        self.rc = None
         self.out = ""
         self.cmd_history = ""
+        self.changed = False
+
+        self.cups_current_options = {}
+        self.cups_expected_options = {}
+        self.class_current_members = []
+        self.printer_current_options = {}
 
         self.check_mode = module.check_mode
 
@@ -397,15 +402,6 @@ class CUPSCommand(object):
         except:
             return None
 
-    def set_rc(self, ret_code):
-        """
-        This method updates the rc with the return code from the command that was just run
-
-        :param ret_code: The return code from the command that was just run
-        :returns: None
-        """
-        self.rc = ret_code
-
     def append_cmd_out(self, cmd_out):
         """
         Appends the out text from the command that was just run to the string with the out text of all the commands run.
@@ -413,7 +409,8 @@ class CUPSCommand(object):
         :param cmd_out: The text that was outputted during last command that was run.
         :returns: None
         """
-        self.out = "{0}{1}{2}".format(self.out, "\n", cmd_out)
+        if cmd_out:
+            self.out = "{0}{1}{2}".format(self.out, "\n", cmd_out)
 
     def append_cmd_history(self, cmd):
         """
@@ -431,15 +428,14 @@ class CUPSCommand(object):
             safe_cmd = "{0}{1}{2}".format(safe_cmd, x, " ")
         self.cmd_history = "{0}{1}{2}".format(self.cmd_history, "\n", safe_cmd)
 
-    def _log_results(self, rc, out):
+    def _log_results(self, out):
         """
         Method to log the details outputted from the command that was just run.
 
-        :param rc: Return Code of the command that was just run.
         :param out: Output text from the command that was just run.
         :returns: None
         """
-        self.set_rc(rc)
+        # self.set_rc(rc)
         self.append_cmd_out(out)
 
     def process_info_command(self, cmd):
@@ -478,7 +474,8 @@ class CUPSCommand(object):
             self.module.exit_json(changed=True)
 
         if not only_log_on_error:
-            self._log_results(rc, out)
+            self._log_results(out)
+            self.changed = True
 
         return rc, out, err
 
@@ -495,7 +492,7 @@ class CUPSCommand(object):
         (rc, out, err) = self.module.run_command(cmd)
 
         if log:
-            self._log_results(rc, out)
+            self._log_results(out)
 
         return rc, out, err
 
@@ -839,6 +836,8 @@ class CUPSCommand(object):
             elif len(kv) == 2:  # Otherwise set it's value to what we received
                 options[kv[0]] = kv[1]
 
+        self.cups_current_options = options
+
         return options
 
     def printer_check_cups_options(self):
@@ -860,6 +859,8 @@ class CUPSCommand(object):
             expected_cups_options['device-uri'] = self.uri
         if self.location:
             expected_cups_options['printer-location'] = self.location
+
+        self.cups_expected_options = expected_cups_options
 
         cups_options = self.cups_item_get_cups_options()
 
@@ -889,6 +890,8 @@ class CUPSCommand(object):
             expected_cups_options['printer-info'] = self.info
         if self.location:
             expected_cups_options['printer-location'] = self.location
+
+        self.cups_expected_options = expected_cups_options
 
         options = self.cups_item_get_cups_options()
         options_status = True
@@ -924,16 +927,17 @@ class CUPSCommand(object):
 
         if rc != 0:
             self.module.fail_json(
-                msg="Error occurred while trying to discern class '{0}' members"
-                    .format(self.name))
+                msg="Error occurred while trying to discern class '{0}' members".format(self.name))
 
         members = []
-        temp = shlex.split(out)
-        # Skip first line as it's an information line.
-        temp = temp[1:]
-        for m in temp:
+        # Skip first line as it's an information line, it end with a ':'.
+        (info, out) = out.split(':', 1)
+        out = shlex.split(out)
+        for m in out:
             str.strip(m)
             members.append(m)
+
+        self.class_current_members = members
 
         return members
 
@@ -994,6 +998,8 @@ class CUPSCommand(object):
                 'label': label,
                 'values': values,
             }
+
+        self.printer_current_options = options
 
         return options
 
@@ -1103,13 +1109,22 @@ class CUPSCommand(object):
                     self.cups_item_uninstall_self()
                 result['class_members'] = self.class_members
 
-        result['changed'] = False if self.rc is None else True
+        result['changed'] = self.changed
 
         if self.out:
             result['stdout'] = self.out
 
+        # Verbose Logging info
         if self.cmd_history:
             result['cmd_history'] = self.cmd_history
+        if self.cups_current_options:
+            result['cups_current_options'] = self.cups_current_options
+        if self.cups_expected_options:
+            result['cups_expected_options'] = self.cups_expected_options
+        if self.class_current_members:
+            result['class_current_members'] = self.class_current_members
+        if self.printer_current_options:
+            result['printer_current_options'] = self.printer_current_options
 
         return result
 
@@ -1122,7 +1137,7 @@ def main():
     main function that populates this ansible module with variables and sets it in motion.
 
     First an Ansible Module is defined with the variable definitions and default values.
-    Then a CUPSCommand is created using using this module. CUPSCommand populates its own values based on the module vars.
+    Then a CUPSCommand is created using using this module. CUPSCommand populates its own values with the module vars.
 
     This CUPSCommand's start_process() method is called to begin processing the information provided to the module.
 
