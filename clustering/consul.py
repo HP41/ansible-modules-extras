@@ -93,6 +93,15 @@ options:
           - the port on which the service is listening required for
             registration of a service, i.e. if service_name or service_id is set
         required: false
+    service_address:
+        description:
+          - the address to advertise that the service will be listening on.
+            This value will be passed as the I(Address) parameter to Consul's
+            U(/v1/agent/service/register) API method, so refer to the Consul API
+            documentation for further details.
+        required: false
+        default: None
+        version_added: "2.1"
     tags:
         description:
           - a list of tags that will be attached to the service registration.
@@ -173,10 +182,16 @@ EXAMPLES = '''
 
   - name: register nginx with an http check
     consul:
-      name: nginx
+      service_name: nginx
       service_port: 80
       interval: 60s
       http: /status
+
+  - name: register external service nginx available at 10.1.5.23
+    consul:
+      service_name: nginx
+      service_port: 80
+      service_address: 10.1.5.23
 
   - name: register nginx with some service tags
     consul:
@@ -199,8 +214,6 @@ EXAMPLES = '''
       interval: 5m
 
 '''
-
-import sys
 
 try:
     import consul
@@ -287,8 +300,8 @@ def add_service(module, service):
     consul_api = get_consul_api(module)
     existing = get_service_by_id(consul_api, service.id)
 
-    # there is no way to retreive the details of checks so if a check is present
-    # in the service it must be reregistered
+    # there is no way to retrieve the details of checks so if a check is present
+    # in the service it must be re-registered
     if service.has_checks() or not existing or not existing == service:
 
         service.register(consul_api)
@@ -321,7 +334,7 @@ def get_consul_api(module, token=None):
     return consul.Consul(host=module.params.get('host'),
                          port=module.params.get('port'),
                          scheme=module.params.get('scheme'),
-                         validate_certs=module.params.get('validate_certs'),
+                         verify=module.params.get('validate_certs'),
                          token=module.params.get('token'))
 
 
@@ -360,6 +373,7 @@ def parse_service(module):
         return ConsulService(
             module.params.get('service_id'),
             module.params.get('service_name'),
+            module.params.get('service_address'),
             module.params.get('service_port'),
             module.params.get('tags'),
         )
@@ -368,13 +382,14 @@ def parse_service(module):
         module.fail_json( msg="service_name supplied but no service_port, a port is required to configure a service. Did you configure the 'port' argument meaning 'service_port'?")
 
 
-class ConsulService():
+class  ConsulService():
 
-    def __init__(self, service_id=None, name=None, port=-1,
+    def __init__(self, service_id=None, name=None, address=None, port=-1,
                  tags=None, loaded=None):
         self.id = self.name = name
         if service_id:
             self.id = service_id
+        self.address = address
         self.port = port
         self.tags = tags
         self.checks = []
@@ -391,6 +406,7 @@ class ConsulService():
             consul_api.agent.service.register(
                 self.name,
                 service_id=self.id,
+                address=self.address,
                 port=self.port,
                 tags=self.tags,
                 check=check.check)
@@ -398,6 +414,7 @@ class ConsulService():
             consul_api.agent.service.register(
                 self.name,
                 service_id=self.id,
+                address=self.address,
                 port=self.port,
                 tags=self.tags)
 
@@ -457,7 +474,7 @@ class ConsulCheck():
             self.check = consul.Check.ttl(self.ttl)
 
         if http:
-            if interval == None:
+            if interval is None:
                 raise Exception('http check must specify interval')
 
             self.check = consul.Check.http(http, self.interval, self.timeout)
@@ -502,7 +519,7 @@ class ConsulCheck():
 
     def _add(self, data, key, attr=None):
         try:
-            if attr == None:
+            if attr is None:
                 attr = key
             data[key] = getattr(self, attr)
         except:
@@ -527,6 +544,7 @@ def main():
             script=dict(required=False),
             service_id=dict(required=False),
             service_name=dict(required=False),
+            service_address=dict(required=False, type='str', default=None),
             service_port=dict(required=False, type='int'),
             state=dict(default='present', choices=['present', 'absent']),
             interval=dict(required=False, type='str'),
