@@ -56,6 +56,14 @@ options:
     required: false
     default: present
     choices: [ "present", "absent" ]
+  action:
+    version_added: "2.2"
+    description:
+      - Whether the rule should be appended at the bottom or inserted at the
+        top. If the rule already exists the chain won't be modified.
+    required: false
+    default: append
+    choices: [ "append", "insert" ]
   ip_version:
     description:
       - Which version of the IP protocol this rule should apply to.
@@ -211,6 +219,20 @@ options:
         sctp."
     required: false
     default: null
+  to_destination:
+    version_added: "2.1"
+    description:
+      - "This specifies a destination address to use with DNAT: without
+        this, the destination address is never altered."
+    required: false
+    default: null
+  to_source:
+    version_added: "2.2"
+    description:
+      - "This specifies a source address to use with SNAT: without
+        this, the source address is never altered."
+    required: false
+    default: null
   set_dscp_mark:
     version_added: "2.1"
     description:
@@ -258,6 +280,13 @@ options:
     version_added: "2.1"
     description:
       - "Specifies the error packet type to return while rejecting."
+    required: false
+  icmp_type:
+    version_added: "2.2"
+    description:
+      - "This allows specification of the ICMP type, which can be a numeric ICMP type,
+        type/code pair, or one of the ICMP type names shown by the command
+        'iptables -p icmp -h'"
     required: false
 '''
 
@@ -313,6 +342,8 @@ def construct_rule(params):
     append_param(rule, params['destination'], '-d', False)
     append_param(rule, params['match'], '-m', True)
     append_param(rule, params['jump'], '-j', False)
+    append_param(rule, params['to_destination'], '--to-destination', False)
+    append_param(rule, params['to_source'], '--to-source', False)
     append_param(rule, params['goto'], '-g', False)
     append_param(rule, params['in_interface'], '-i', False)
     append_param(rule, params['out_interface'], '-o', False)
@@ -334,6 +365,7 @@ def construct_rule(params):
     append_param(rule, params['uid_owner'], '--uid-owner', False)
     append_jump(rule, params['reject_with'], 'REJECT')
     append_param(rule, params['reject_with'], '--reject-with', False)
+    append_param(rule, params['icmp_type'], '--icmp-type', False)
     return rule
 
 
@@ -356,6 +388,11 @@ def append_rule(iptables_path, module, params):
     module.run_command(cmd, check_rc=True)
 
 
+def insert_rule(iptables_path, module, params):
+    cmd = push_arguments(iptables_path, '-I', params)
+    module.run_command(cmd, check_rc=True)
+
+
 def remove_rule(iptables_path, module, params):
     cmd = push_arguments(iptables_path, '-D', params)
     module.run_command(cmd, check_rc=True)
@@ -367,11 +404,14 @@ def main():
         argument_spec=dict(
             table=dict(required=False, default='filter', choices=['filter', 'nat', 'mangle', 'raw', 'security']),
             state=dict(required=False, default='present', choices=['present', 'absent']),
+            action=dict(required=False, default='append', type='str', choices=['append', 'insert']),
             ip_version=dict(required=False, default='ipv4', choices=['ipv4', 'ipv6']),
             chain=dict(required=True, default=None, type='str'),
             protocol=dict(required=False, default=None, type='str'),
             source=dict(required=False, default=None, type='str'),
+            to_source=dict(required=False, default=None, type='str'),
             destination=dict(required=False, default=None, type='str'),
+            to_destination=dict(required=False, default=None, type='str'),
             match=dict(required=False, default=[], type='list'),
             jump=dict(required=False, default=None, type='str'),
             goto=dict(required=False, default=None, type='str'),
@@ -390,6 +430,7 @@ def main():
             limit_burst=dict(required=False, default=None, type='str'),
             uid_owner=dict(required=False, default=None, type='str'),
             reject_with=dict(required=False, default=None, type='str'),
+            icmp_type=dict(required=False, default=None, type='str'),
         ),
         mutually_exclusive=(
             ['set_dscp_mark', 'set_dscp_mark_class'],
@@ -404,6 +445,7 @@ def main():
         rule=' '.join(construct_rule(module.params)),
         state=module.params['state'],
     )
+    insert = (module.params['action'] == 'insert')
     ip_version = module.params['ip_version']
     iptables_path = module.get_bin_path(BINS[ip_version], True)
     rule_is_present = check_present(iptables_path, module, module.params)
@@ -421,7 +463,10 @@ def main():
         module.exit_json(**args)
 
     if should_be_present:
-        append_rule(iptables_path, module, module.params)
+        if insert:
+            insert_rule(iptables_path, module, module.params)
+        else:
+            append_rule(iptables_path, module, module.params)
     else:
         remove_rule(iptables_path, module, module.params)
 

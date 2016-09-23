@@ -3,8 +3,8 @@
 
 """
 (c) 2015, David Symons (Multimac) <Mult1m4c@gmail.com>
-(c) 2016, Konstantin Shalygin <k0ste@cn.ru>
-(c) 2016, Hitesh Prabhakar <HP41@GitHubm>
+(c) 2016, Konstantin Shalygin <k0ste@k0ste.ru>
+(c) 2016, Hitesh Prabhakar <HP41@GitHub>
 
 This file is part of Ansible
 
@@ -38,7 +38,6 @@ description:
     - Creates, removes and sets options for printers in CUPS.
     - Creates, removes and sets options for classes in CUPS.
     - For class installation, the members are defined as a final state and therefore will only have the members defined.
-    - At the moment, this module doesn't support check_mode
 version_added: "2.1"
 notes: []
 requirements:
@@ -161,8 +160,8 @@ options:
 
 
 EXAMPLES = '''
-# Creates HP printer via ethernet, set default paper size and
-  make this printer as server default
+# Creates HP MFP via ethernet, set default A4 paper size and make this printer
+  as server default.
 - cups_lpadmin:
     name: 'HP_M1536'
     state: 'present'
@@ -170,43 +169,49 @@ EXAMPLES = '''
     uri: 'hp:/net/HP_LaserJet_M1536dnf_MFP?ip=192.168.1.2'
     model: 'drv:///hp/hpcups.drv/hp-laserjet_m1539dnf_mfp-pcl3.ppd'
     default: 'true'
-    location: 'Lib'
-    info: 'MFP'
+    location: 'Room 404'
+    info: 'MFP, but duplex broken, as usual on this model'
     printer_assign_policy: 'students'
     report_ipp_supply_levels: 'true'
     report_snmp_supply_levels: 'false'
     options:
       media: 'iso_a4_210x297mm'
 
-# Creates HP Printer via IPP (shared USB printer in another CUPS instance)
-  very important include 'snmp=false' to prevent adopt 'parent' driver,
-  because if 'parent' receive not raw job this job have fail (filter failed)
+# Creates HP Printer via IPP (shared USB printer in another CUPS instance).
+  Very important include 'snmp=false' to prevent adopt 'parent' driver,
+  because if 'parent' receive not raw job this job have fail (filter failed).
 - cups_lpadmin:
     name: 'HP_P2055'
     state: 'present'
     uri: 'ipp://192.168.2.127:631/printers/HP_P2055?snmp=false'
     model: 'raw'
-    default: 'true'
     options:
       media: 'iso_a4_210x297mm'
 
-# Create CUPS Class
+# Create CUPS Class.
 - cups_lpadmin:
-    name: 'TestClass'
+    name: 'StudentClass'
     state: 'present'
     printer_or_class: 'class'
     class_members:
-        - TestPrinter1
-        - TestPrinter2
-    info: 'A test class'
-    location: 'A place of great importance'
+        - CampusPrinter1
+        - CampusPrinter2
+    info: 'Printers for students'
+    location: 'Room 404'
 
-# Creates a Zebra ZPL printer called zebra
-- cups_lpadmin: state=present name=zebra uri=192.168.1.2 model=drv:///sample.drv/zebra.ppd
+# Deletes the printers/classes.
+- cups_lpadmin:
+    name: 'HP_P2055'
+    state: 'absent'
+    printer_or_class: 'printer'
+- cups_lpadmin:
+    name: 'StudentClass'
+    state: 'absent'
+    printer_or_class: 'class'
 
-# Deletes the printers/classes set up by the previous tasks
-- cups_lpadmin: state=absent printer_or_class=printer name=zebra
-- cups_lpadmin: state=absent printer_or_class=class name=TestClass
+# Purge all printers/classes. Useful when does not matter what we have now,
+  client always receive new configuration.
+- cups_lpadmin: purge='true'
 '''
 
 # ===========================================
@@ -279,7 +284,7 @@ class CUPSCommand(object):
             - Methods prefixed with 'printer' or '_printer' are meant to work with printers only.
 
         CUPSCommand handles printers like so:
-            - If state=absent,
+            - If state=absent:
                 - Printer exists: Deletes printer
                 - Printer doesn't exist: Does nothing and exits
             - If state=present:
@@ -318,7 +323,7 @@ class CUPSCommand(object):
 
     def __init__(self, module):
         """
-        Assigns module vars to object
+        Assigns module vars to object.
         """
         self.module = module
 
@@ -380,7 +385,7 @@ class CUPSCommand(object):
 
             if self.printer_or_class == 'printer':
                 if not self.uri and not self.exists_self():
-                    msgs.append("URI is required to install printer")
+                    msgs.append("URI is required to install printer.")
 
             if self.printer_or_class == 'class':
                 if not self.class_members and not self.exists_self():
@@ -393,7 +398,7 @@ class CUPSCommand(object):
     @staticmethod
     def strip_whitespace(text):
         """
-        A static method to help with stripping white space around object variables
+        A static method to help with stripping white space around object variables.
 
         :returns: Trailing whitespace removed text or 'None' if input is 'None'.
         """
@@ -416,7 +421,7 @@ class CUPSCommand(object):
         """
         Appends the commands run into a single string.
 
-        :param cmd: The command to be appended into the command history string
+        :param cmd: The command to be appended into the command history string.
         :returns: None
         """
         safe_cmd = ""
@@ -435,12 +440,11 @@ class CUPSCommand(object):
         :param out: Output text from the command that was just run.
         :returns: None
         """
-        # self.set_rc(rc)
         self.append_cmd_out(out)
 
     def process_info_command(self, cmd):
         """
-        Runs a command that's meant to poll information only
+        Runs a command that's meant to poll information only.
 
         Wraps around _process_command and ensures command output isn't logged as we're just fetching for information.
 
@@ -456,7 +460,7 @@ class CUPSCommand(object):
         Wraps around _process_command and ensures command output is logged as we're making changes to the system.
         An optional only_log_on_error is provided for the install_mandatory_options methods that are always run
         almost always and need not pollute the changed/output text with its information. This'll ensure the output
-        and error text is only recorded when there's an error (err != None) and (rc != 0)
+        and error text is only recorded when there's an error (err != None) and (rc != 0).
 
         It also is an easy way to centralize change command therefore making support_check_mode easier to implement.
 
@@ -468,7 +472,7 @@ class CUPSCommand(object):
         (rc, out, err) = self._process_command(cmd, log=False)
 
         if rc != 0 and err:
-            self.module.fail_json(msg="Error Message - {0}. Command Error Output - {1}".format(err_msg, err))
+            self.module.fail_json(msg="Error Message - {0}. Command Error Output - {1}.".format(err_msg, err))
 
         if self.check_mode:
             self.module.exit_json(changed=True)
@@ -498,7 +502,7 @@ class CUPSCommand(object):
 
     def _printer_get_installed_drivers(self):
         """
-        Parses the output of lpinfo -l -m to provide a list of available drivers on machine
+        Parses the output of lpinfo -l -m to provide a list of available drivers on machine.
 
         Example output from lpinfo -l -m:
         Model:  name = gutenprint.5.2://xerox-wc_m118/expert
@@ -546,7 +550,7 @@ class CUPSCommand(object):
         """
         Method to return all current printers and classes in CUPS.
 
-        :returns: list of printer or classes names
+        :returns: list of printer or classes names.
         """
         cmd = ['lpstat', '-a']
         (rc, out, err) = self.process_info_command(cmd)
@@ -571,7 +575,7 @@ class CUPSCommand(object):
         """
         Method to return the make and model of the driver/printer that is supplied to the object.
 
-        if ppd is provided, ignore this as the ppd provided takes priority over finding a driver.
+        If ppd is provided, ignore this as the ppd provided takes priority over finding a driver.
 
         If not ppd is provided (default behaviour), the model specified is used.
         It checks to see if the model specified is in the list of drivers installed on the system. If not, the whole
@@ -591,7 +595,7 @@ class CUPSCommand(object):
         if self.model in installed_drivers:
             return installed_drivers[self.model]['make-and-model']
 
-        self.module.fail_json(msg="Unable to determine printer make and model for printer '{0}'".format(self.model))
+        self.module.fail_json(msg="Unable to determine printer make and model for printer '{0}'.".format(self.model))
 
     def _printer_install(self):
         """
@@ -671,6 +675,7 @@ class CUPSCommand(object):
     def _printer_install_options(self):
         """
         Installs any printer driver specific options defined.
+
         :returns: rc, out, err. The output of the lpadmin installation command.
         """
         cmd = ['lpadmin', '-p', self.name]
@@ -691,22 +696,21 @@ class CUPSCommand(object):
         It loops through the list of printers that are supposed to be in the class and confirms if they exists and
         adds them to the class. If any one of the printers don't exist, the whole module will fail with an error
         message.
-
         """
         for printer in self.class_members:
-            # Going through all the printers that are supposed to be in the class and adding them to said class.
-            # Ensuring first the printer exists.
+            # Going through all the printers that are supposed to be in the class and adding them to said class
+            # Ensuring first the printer exists
             if self.exists(item_to_check=printer):
                 cmd = ['lpadmin', '-p', printer, '-c', self.name]
                 self.process_change_command(cmd,
                                             err_msg="Failed to add printer '{0}' to class '{1}'"
                                             .format(printer, self.name))
             else:
-                self.module.fail_json(msg="Printer '{0}' doesn't exist and cannot be added to class '{1}'"
+                self.module.fail_json(msg="Printer '{0}' doesn't exist and cannot be added to class '{1}'."
                                       .format(printer, self.name))
 
         # Now that the printers are added to the class and the class created, we are setting up a few
-        # settings for the class itself.
+        # settings for the class itself
         if self.exists_self():
             cmd = ['lpadmin', '-p', self.name]
 
@@ -760,7 +764,7 @@ class CUPSCommand(object):
 
     def cups_item_uninstall_self(self):
         """
-        Uninstalls the printer or class defined in this class
+        Uninstalls the printer or class defined in this class.
         """
         self.cups_item_uninstall(item_to_uninstall=self.name)
 
@@ -768,7 +772,7 @@ class CUPSCommand(object):
         """
         Uninstalls a printer or class given in item_to_uninstall if it exists else do nothing.
 
-        :param item_to_uninstall: the CUPS Item (Printer or Class) that needs to be uninstalled
+        :param item_to_uninstall: the CUPS Item (Printer or Class) that needs to be uninstalled.
         """
         cmd = ['lpadmin', '-x']
 
@@ -779,7 +783,7 @@ class CUPSCommand(object):
                                             err_msg="Uninstalling CUPS Item '{0}' failed"
                                             .format(item_to_uninstall))
             else:
-                self.module.fail_json(msg="Cannot delete/uninstall a cups item (printer/class) with no name")
+                self.module.fail_json(msg="Cannot delete/uninstall a cups item (printer/class) with no name.")
 
     def exists_self(self):
         """
@@ -797,7 +801,7 @@ class CUPSCommand(object):
 
         Using the lpstat command and based on if an error code is returned it can confirm if a printer or class exists.
 
-        :param item_to_check: The print or class name to check if it exists
+        :param item_to_check: The print or class name to check if it exists.
 
         :returns: True if return code form the command is 0 and therefore there where no errors and printer/class
         exists. Module exits if item_to_check is not defined.
@@ -807,7 +811,7 @@ class CUPSCommand(object):
             (rc, out, err) = self.process_info_command(cmd)
             return rc == 0
         else:
-            self.module.fail_json(msg="Cannot check if a cups item (printer/class) exists that has no name")
+            self.module.fail_json(msg="Cannot check if a cups item (printer/class) exists that has no name.")
 
     def cups_item_get_cups_options(self):
         """
@@ -846,7 +850,7 @@ class CUPSCommand(object):
         Polls and retrieves a hash of options currently set for the printer.
         Compares them and returns True if the option values are satisfied or False if not satisfied.
 
-        :returns: 'True' if the option values match else 'False'
+        :returns: 'True' if the option values match else 'False'.
         """
         expected_cups_options = {
             'printer-make-and-model': self._printer_get_make_and_model(),
@@ -880,7 +884,7 @@ class CUPSCommand(object):
         Polls and retrieves a hash of options currently set for the class.
         Compares them and returns True if the option values are satisfied or False if not satisfied.
 
-        :returns: 'True' if the option values match else 'False'
+        :returns: 'True' if the option values match else 'False'.
         """
         expected_cups_options = {
             'printer-location': self.location,
@@ -896,7 +900,7 @@ class CUPSCommand(object):
         options = self.cups_item_get_cups_options()
         options_status = True
 
-        # Comparing expected options as stated above to the options of the actual class object.
+        # Comparing expected options as stated above to the options of the actual class object
         for k in expected_cups_options:
             if k not in options:
                 options_status = False
@@ -927,10 +931,10 @@ class CUPSCommand(object):
 
         if rc != 0:
             self.module.fail_json(
-                msg="Error occurred while trying to discern class '{0}' members".format(self.name))
+                msg="Error occurred while trying to discern class '{0}' members.".format(self.name))
 
         members = []
-        # Skip first line as it's an information line, it end with a ':'.
+        # Skip first line as it's an information line, it end with a ':'
         (info, out) = out.split(':', 1)
         out = shlex.split(out)
         for m in out:
@@ -1022,7 +1026,7 @@ class CUPSCommand(object):
 
     def printer_install(self):
         """
-        The main method that's called when state=present and printer_or_class=printer
+        The main method that's called when state is 'present' and printer_or_class is 'printer'.
 
         It checks to see if printer exists and if its settings are the same as defined.
         If not, it deletes it.
@@ -1040,7 +1044,7 @@ class CUPSCommand(object):
             self._printer_install()
 
         # cupsIPPSupplies, cupsSNMPSupplies, job-k-limit, job-page-limit, printer-op-policy,
-        # job-quota-period cannot be checked via cups command-line tools yet.
+        # job-quota-period cannot be checked via cups command-line tools yet
         # Therefore force set these options if they exist
         if self.exists_self():
             self._printer_install_mandatory_options()
@@ -1050,7 +1054,7 @@ class CUPSCommand(object):
 
     def class_install(self):
         """
-        The main method that's called when state=present and printer_or_class=class
+        The main method that's called when state is 'present' and printer_or_class is 'class'.
 
         It checks to see if class exists and if its settings are the same as defined.
         If not, it deletes it.
@@ -1070,7 +1074,7 @@ class CUPSCommand(object):
 
     def start_process(self):
         """
-        This starts the process of of processing the information provided to the module
+        This starts the process of processing the information provided to the module.
 
         Based on state, the following is done:
         - state=present:
@@ -1134,7 +1138,7 @@ class CUPSCommand(object):
 
 def main():
     """
-    main function that populates this ansible module with variables and sets it in motion.
+    main function that populates this Ansible module with variables and sets it in motion.
 
     First an Ansible Module is defined with the variable definitions and default values.
     Then a CUPSCommand is created using using this module. CUPSCommand populates its own values with the module vars.
@@ -1167,8 +1171,9 @@ def main():
             job_page_limit=dict(required=False, default=None, type='int'),
             options=dict(required=False, default={}, type='dict'),
         ),
+        supports_check_mode=True,
         required_one_of=[['name', 'purge']],
-        supports_check_mode=True
+        mutually_exclusive=[['name', 'purge']]
     )
 
     cups_command = CUPSCommand(module)

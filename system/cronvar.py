@@ -106,6 +106,8 @@ import tempfile
 import platform
 import pipes
 import shlex
+from ansible.module_utils.basic import *
+from ansible.module_utils.pycompat24 import get_exception
 
 CRONCMD = "/usr/bin/crontab"
 
@@ -147,7 +149,8 @@ class CronVar(object):
                 f = open(self.cron_file, 'r')
                 self.lines = f.read().splitlines()
                 f.close()
-            except IOError, e:
+            except IOError:
+                e = get_exception()
                 # cron file does not exist
                 return
             except:
@@ -203,7 +206,8 @@ class CronVar(object):
         try:
             os.unlink(self.cron_file)
             return True
-        except OSError, e:
+        except OSError:
+            e = get_exception()
             # cron file does not exist
             return False
         except:
@@ -363,7 +367,7 @@ def main():
     res_args = dict()
 
     # Ensure all files generated are only writable by the owning user.  Primarily relevant for the cron_file option.
-    os.umask(022)
+    os.umask(int('022',8))
     cronvar = CronVar(module, user, cron_file)
 
     module.debug('cronvar instantiated - name: "%s"' % name)
@@ -425,7 +429,5 @@ def main():
     # --- should never get here
     module.exit_json(msg="Unable to execute cronvar task.")
 
-# import module snippets
-from ansible.module_utils.basic import *
 
 main()
