@@ -24,6 +24,7 @@ ANSIBLE_METADATA = {'status': ['stableinterface'],
                     'supported_by': 'community',
                     'version': '1.0'}
 
+
 DOCUMENTATION = '''
 ---
 module: cups_lpadmin
@@ -207,8 +208,9 @@ EXAMPLES = r'''
 
 # Purge all printers/classes. Useful when does not matter what we have now,
   client always receive new configuration.
-- cups_lpadmin:
-    purge: "true"
+
+- cups_lpadmin: purge='true'
+
 '''
 
 RETURN = '''
@@ -1177,6 +1179,7 @@ def main():
     result_info = cups_command.start_process()
     module.exit_json(**result_info)
 
+# Import statements at the bottom as per Ansible best practices.
 from ansible.module_utils.basic import *
 
 if __name__ == '__main__':
